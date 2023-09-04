@@ -34,6 +34,8 @@ Temos as seguintes colunas nos arquivos CSV, em conformidade com a documentaçã
 
 A princípio não vamos trabalhar com os dados de GLP.
 
+Mais a frente vamos complementar o dataset com pesquisas de preços das distribuidoras.
+
 ## 1. Storage no Google Cloud
 
 Criamos um bucket de nome `hadoop-dados-brutos` em uma região padrão (us-east1).
@@ -743,7 +745,9 @@ group by produto;
 5 rows selected (21.159 seconds)
 ```
 
-## 10. Consultas
+## 10. Analítico
+
+Algumas perguntas para análise dos dados com consultas SQL de exemplo e pesquisas relacionadas na web.
 
 1. Qual a distribuição de CNPJs por bandeira?
 
@@ -1008,11 +1012,11 @@ O caso do Amapá é uma exceção. Encontramos notícia relacionada de 2022-04 e
 +---------+---------+---------------------------+
 ```
 
-5. Em quais estados é mais vantajoso abastecer o carro com alcool?
+5. Em quais estados é mais vantajoso abastecer o carro com etanol?
 
-Diz-se que se o preço do alcool está menor do que 70% do preço da gasolina, é mais vantajoso abastecer com alcool.
+Diz-se que se o preço do etanol está menor do que 70% do preço da gasolina, é mais vantajoso abastecer com etanol.
 
-Podemos então consultar a razão entre os preços médios de revenda do alcool (etanol) e da gasolina.
+Podemos então consultar a razão entre os preços médios de revenda do etanol e da gasolina.
 
 ```
 select
@@ -1038,3 +1042,51 @@ from
 where g.mes = '2023-06'
 order by razao_etanol_gasolina desc;
 ```
+
+```
++----------+-----------+-----------+------------------------+
+|  g.mes   | g.regiao  | g.estado  | razao_etanol_gasolina  |
++----------+-----------+-----------+------------------------+
+| 2023-06  | N         | AP        | 1.030704               |
+| 2023-06  | S         | RS        | 0.885061               |
+| 2023-06  | N         | RR        | 0.881930               |
+| 2023-06  | NE        | MA        | 0.879345               |
+| 2023-06  | N         | PA        | 0.848629               |
+| 2023-06  | NE        | CE        | 0.837198               |
+| 2023-06  | S         | SC        | 0.833240               |
+| 2023-06  | N         | RO        | 0.832856               |
+| 2023-06  | NE        | PI        | 0.817529               |
+| 2023-06  | NE        | RN        | 0.816962               |
+| 2023-06  | NE        | AL        | 0.815444               |
+| 2023-06  | NE        | SE        | 0.811826               |
+| 2023-06  | N         | TO        | 0.807028               |
+| 2023-06  | SE        | RJ        | 0.799463               |
+| 2023-06  | SE        | ES        | 0.792597               |
+| 2023-06  | NE        | PE        | 0.791263               |
+| 2023-06  | NE        | BA        | 0.786031               |
+| 2023-06  | N         | AC        | 0.783112               |
+| 2023-06  | NE        | PB        | 0.782799               |
+| 2023-06  | S         | PR        | 0.740611               |
+| 2023-06  | N         | AM        | 0.731528               |
+| 2023-06  | CO        | MS        | 0.718496               |
+| 2023-06  | SE        | MG        | 0.711114               |
+| 2023-06  | CO        | DF        | 0.706686               |
+| 2023-06  | CO        | GO        | 0.701021               |
+| 2023-06  | SE        | SP        | 0.689637               |
+| 2023-06  | CO        | MT        | 0.642383               |
++----------+-----------+-----------+------------------------+
+```
+
+Algumas notícias recentes que reforçam os dados
+
+- [Mato Grosso pode bater recorde com 5,2 bilhões de litros de etanol](https://forbes.com.br/forbesagro/2023/03/mato-grosso-deve-processar-recorde-de-52-bilhoes-de-litros-de-etanol/)
+- [MT tem menor ICMS de etanol no país](https://www5.sefaz.mt.gov.br/-/mt-tem-menor-icms-de-etanol-no-pa%C3%ADs-aumento-no-pre%C3%A7o-se-deve-a-atraso-na-colheita-da-cana)
+- [ANP: etanol é mais competitivo em relação à gasolina em cinco Estados e no DF](https://www.udop.com.br/noticia/2023/08/07/anp-etanol-e-mais-competitivo-em-relacao-a-gasolina-em-cinco-estados-e-no-df.html)
+
+## 11. Propostas de evolução
+
+- Análise dos dados por série temporal (requer uso de graficos)
+- Análise de variações de preços
+- Cruzamento com dados do IBGE para usar médias ponderadas ao invés de médias aritméticas
+- Comparações e análises com indicadores de inflação (gerais e locais) e preços de commodities (cana de açucar, milho, petróleo)
+- Instalação e uso do [Hue](https://github.com/samelamin/dataproc-initialization-actions/tree/master/hue) com o Google Dataproc para facilitar a interação com o Hive
