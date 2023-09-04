@@ -237,6 +237,8 @@ A nossa tabela de dados brutos terá um schema baseado no conteúdo dos nossos a
 
 Por enquanto consideramos todos os campos como STRING.
 
+O uso do formato SERDE é necessário pois encontramos alguns registros onde o valor de uma coluna pode ocupar várias linhas, usando neste caso o caractére `"` como marcador de início e fim.
+
 ```
 use precos_anp;
 
@@ -260,7 +262,7 @@ create table combustiveis_automotivos (
 )
 row format serde 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
 with serdeproperties (
-  "separatorChar" = ",",
+  "separatorChar" = ";",
   "quoteChar"     = "\""
 )
 fields terminated by ';'
@@ -338,14 +340,240 @@ INFO  : Completed executing command(queryId=hive_20230904013619_0f8b7571-e728-47
 
 Temos cerca de 23 milhões de registros.
 
-O tempo de consulta parece alto pois estamos trabalhando em um formato não otimizado.
+Verificando o quantitativo de registros por `produto`
 
-
+```sql
+select produto, count(*) from combustiveis_automotivos group by produto;
+```
 
 ```
-ALTER TABLE combustiveis_automotivos SET SERDE 'org.apache.hadoop.hive.serde2.OpenCSVSerde' 
-WITH SERDEPROPERTIES (
-  "separatorChar" = ";",
-  "quoteChar"     = "\""
-);
+----------------------------------------------------------------------------------------------
+        VERTICES      MODE        STATUS  TOTAL  COMPLETED  RUNNING  PENDING  FAILED  KILLED  
+----------------------------------------------------------------------------------------------
+Map 1 .......... container     SUCCEEDED      6          6        0        0       0       0  
+Reducer 2 ...... container     SUCCEEDED    156        156        0        0       0       0  
+----------------------------------------------------------------------------------------------
+VERTICES: 02/02  [==========================>>] 100%  ELAPSED TIME: 168.34 s   
+----------------------------------------------------------------------------------------------
+INFO  : Completed executing command(queryId=hive_20230904020550_44081b4b-b4f7-4e57-9c4e-5aaf4703ea4a); Time taken: 179.732 seconds
+INFO  : OK
++----------------------------------------------------+----------+
+|                      produto                       |   _c1    |
++----------------------------------------------------+----------+
+| DIESEL S10                                         | 1978185  |
+| DIESEL S50                                         | 44495    |
+| DIESEL                                             | 5406872  |
+| GNV                                                | 435900   |
+| ETANO                                              | 1        |
+| GASOLINA                                           | 7457216  |
+| ETANOL                                             | 6896581  |
+| GASOLINA ADITIVADA                                 | 426690   |
++----------------------------------------------------+----------+
+8 rows selected (182.242 seconds)
+```
+
+Os tempos de consulta parecem altos pois estamos trabalhando em um formato de dados não otimizado.
+
+Temos um registro com o nome de produto `ETANO` quando deveria ser `ETANOL`. Podemos corrigir em uma outra etapa.
+
+Saindo do `beeline` para verificar o HDFS, podemos ver que a pasta `/data`` se encontra vazia.
+
+```
+hdfs dfs -ls /data
+```
+
+Enquanto a pasta de localização da tabela `combustiveis_automotivos` contém os arquivos CSV.
+
+O comando `load data` fez a migração dos arquivos.
+
+```
+hdfs dfs -ls /user/hive/warehouse/precos_anp.db/combustiveis_automotivos
+Found 39 items
+-rw-r--r--   2 <username> hadoop   48637859 2023-09-04 00:24 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos/ca-2004-01.csv
+-rw-r--r--   2 <username> hadoop  158110155 2023-09-04 00:24 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos/ca-2004-02.csv
+-rw-r--r--   2 <username> hadoop  157737721 2023-09-04 00:24 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos/ca-2005-01.csv
+...
+```
+
+## 8. Otimizando a tabela de dados
+
+Idéia é migrar os dados para uma tabela mais otimizada para as consultas que executarmos.
+
+Escolhemos o formato ORC por entender que é mais amigável ao Hadoop.
+
+- [Tipos de arquivos em Bigdata](https://medium.com/rescuepoint/tipos-de-dados-em-bigdata-6ab0debec30a)
+
+> O projeto do ORC nasceu em 2013 como uma iniciativa de acelerar o Hive e reduzir armazenamento no Hadoop.
+
+Adotamos a compressão SNAPPY por ser menos custosa em termos de CPU, dado que não estamos lidando com um volume tão grande de dados.
+
+Inicialmente pensamos em fazer a partição por `produto` e `estado` para otimizar o processamento ao realizar filtros e agrupamentos sobre estes campos.
+
+> In Hadoop, partitioning is used to split data into smaller chunks, which are then distributed across multiple nodes in a cluster for processing.
+> Partitioning works better when the cardinality of the partitioning field is not too high.
+
+Há um limite para o número de partições. Apesar de ser configurável, seria melhor evitar um número alto de partições.
+
+> The maximum number of dynamic partitions is controlled by hive.exec.max.dynamic.partitions and hive.exec.max.dynamic.partitions.pernode. Maximum was set to 100 partitions per node.
+
+Consideramos então particionar a tabela somente pelo campo `produto`.
+
+Usamos a compartimentação (bucketing) por `data` para otimizar a combinação dos dados (JOIN) com outras séries históricas.
+
+> Bucketing works well when the field has high cardinality and data is evenly distributed among buckets. 
+
+- [HIVE PARTITIONING VS. BUCKETING](https://data-flair.training/forums/topic/hive-partitioning-vs-bucketing/)
+
+Com isso chegamos nesse schema para a tabela `combustiveis_automotivos_otimizada` 
+
+```
+use precos_anp;
+
+create table combustiveis_automotivos_otimizada (
+  regiao STRING,
+  estado STRING,
+  municipio STRING,
+  revenda STRING,
+  cnpj_revenda STRING,
+  endereco_rua STRING,
+  endereco_numero STRING,
+  endereco_complemento STRING,
+  endereco_bairro STRING,
+  endereco_cep STRING,
+  data DATE,
+  valor_venda DECIMAL(10,4),  -- Tipo decimal com até 4 casas decimais
+  valor_compra DECIMAL(10,4),  -- Tipo decimal com até 4 casas decimais
+  unidade_medida STRING,
+  bandeira STRING
+)
+partitioned by (produto STRING)
+clustered by (data) into 8 buckets
+stored as orc
+tblproperties ("orc.compress"="SNAPPY");
+```
+
+```
+show tables;
+
++-------------------------------------+
+|              tab_name               |
++-------------------------------------+
+| combustiveis_automotivos            |
+| combustiveis_automotivos_otimizada  |
++-------------------------------------+
+```
+
+```
+describe combustiveis_automotivos_otimizada;
+
++--------------------------+----------------+----------+
+|         col_name         |   data_type    | comment  |
++--------------------------+----------------+----------+
+| regiao                   | string         |          |
+| estado                   | string         |          |
+| municipio                | string         |          |
+| revenda                  | string         |          |
+| cnpj_revenda             | string         |          |
+| endereco_rua             | string         |          |
+| endereco_numero          | string         |          |
+| endereco_complemento     | string         |          |
+| endereco_bairro          | string         |          |
+| endereco_cep             | string         |          |
+| data                     | date           |          |
+| valor_venda              | decimal(10,4)  |          |
+| valor_compra             | decimal(10,4)  |          |
+| unidade_medida           | string         |          |
+| bandeira                 | string         |          |
+| estado                   | string         |          |
+| produto                  | string         |          |
+|                          | NULL           | NULL     |
+| # Partition Information  | NULL           | NULL     |
+| # col_name               | data_type      | comment  |
+| produto                  | string         |          |
++--------------------------+----------------+----------+
+```
+
+Uma vez criada a tabela otimizada, podemos inserir os registros a partir da tabela de dados brutos, fazendo também a conversão e correção de campos.
+
+```
+use precos_anp;
+
+insert overwrite table combustiveis_automotivos_otimizada 
+select
+  regiao,
+  estado,
+  municipio,
+  revenda,
+  cnpj_revenda,
+  endereco_rua,
+  endereco_numero,
+  endereco_complemento,
+  endereco_bairro,
+  endereco_cep,
+  cast(regexp_replace(data, '^(\\d{2})/(\\d{2})/(\\d{4})$', '$3-$2-$1') as date) as data,
+  cast(replace(valor_venda, ',', '.') as decimal(10,4)) as valor_venda,
+  cast(replace(valor_compra, ',', '.') as decimal(10,4)) as valor_compra,
+  unidade_medida,
+  bandeira,
+  case 
+    when produto = 'ETANO' then 'ETANOL'
+    else produto
+  end as produto
+from combustiveis_automotivos;
+```
+
+Em caso de `Out of Memory`, fazer a inserção por partes usando o `insert into` com cláusula `where` para inserir um conjunto de dados por vez.
+
+Refazendo a contagem de registros por produto
+
+```
+select produto, count(*) from combustiveis_automotivos_otimizada group by produto;
+```
+
+```
++---------------------+----------+
+|       produto       |   _c1    |
++---------------------+----------+
+| DIESEL S50          | 44495    |
+| DIESEL              | 5406872  |
+| GASOLINA            | 7457216  |
+| ETANOL              | 6896582  |
+| GNV                 | 435900   |
+| DIESEL S10          | 1978185  |
+| GASOLINA ADITIVADA  | 426690   |
++---------------------+----------+
+7 rows selected (23.448 seconds)
+```
+
+A consulta executou consideravelmente mais rápido na nova tabela.
+
+Checando o conteúdo da tabela no HDFS verificamos que cada partição fica em uma pasta
+
+```
+hdfs dfs -ls /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada
+
+Found 7 items
+drwxr-xr-x   - anonymous hadoop          0 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL
+drwxr-xr-x   - anonymous hadoop          0 2023-09-04 04:43 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL S10
+drwxr-xr-x   - anonymous hadoop          0 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL S50
+drwxr-xr-x   - anonymous hadoop          0 2023-09-04 05:01 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=ETANOL
+drwxr-xr-x   - anonymous hadoop          0 2023-09-04 05:06 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=GASOLINA
+drwxr-xr-x   - anonymous hadoop          0 2023-09-04 05:18 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=GASOLINA ADITIVADA
+drwxr-xr-x   - anonymous hadoop          0 2023-09-04 04:57 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=GNV
+```
+
+E dentro de cada pasta temos 8 buckets com tamanhos parecidos, em acordo com o esperado.
+
+```
+hdfs dfs -ls /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL
+
+Found 8 items
+-rw-r--r--   2 anonymous hadoop   15494126 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000000_0
+-rw-r--r--   2 anonymous hadoop    9358828 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000001_0
+-rw-r--r--   2 anonymous hadoop    9610799 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000002_0
+-rw-r--r--   2 anonymous hadoop    9142598 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000003_0
+-rw-r--r--   2 anonymous hadoop    8739530 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000004_0
+-rw-r--r--   2 anonymous hadoop    9195491 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000005_0
+-rw-r--r--   2 anonymous hadoop   10241446 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000006_0
+-rw-r--r--   2 anonymous hadoop    9465032 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000007_0
 ```
