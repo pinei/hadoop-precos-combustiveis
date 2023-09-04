@@ -12,24 +12,24 @@ Coletamos a série histórica de "Combustíveis automotivos" que vai de 2004 a 2
 
 - [Metadados em PDF](https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/arquivos/shpc/metadados-serie-historica-precos-combustiveis-1.pdf)
 
-Temos as seguintes colunas no CSV, em conformidade com a documentação de metadados:
+Temos as seguintes colunas nos arquivos CSV, em conformidade com a documentação de metadados:
 
-- Regiao - Sigla
-- Estado - Sigla
-- Municipio
-- Revenda
-- CNPJ da Revenda
-- Nome da Rua
-- Numero Rua
-- Complemento
-- Bairro
-- Cep
-- Produto
-- Data da Coleta
-- Valor de Venda
-- Valor de Compra
-- Unidade de Medida
-- Bandeira
+- Regiao - Sigla (ex: S, N, SE)
+- Estado - Sigla (ex: RJ, SP, MG)
+- Municipio (nome do município)
+- Revenda (razão social)
+- CNPJ da Revenda (ex: 00.003.188/0001-21)
+- Nome da Rua (informação de logradouro)
+- Numero Rua (informação de logradouro)
+- Complemento (informação de logradouro)
+- Bairro (informação de logradouro)
+- Cep (informação de logradouro)
+- Produto (produto combustível) (ex: GASOLINA, ETANOL, DIESEL)
+- Data da Coleta (data no formato (dd/mm/aaaa)
+- Valor de Venda (numero em formato brasileiro com até 4 casas decimais)
+- Valor de Compra (numero em formato brasileiro com até 4 casas decimais)
+- Unidade de Medida (unidade ao qual o custo se refere) (ex: R$ / litro)
+- Bandeira (nome de marca do posto de revenda) (ex: IPIRANGA, BRANCA, COSAN, etc.)
 ```
 
 A princípio não vamos trabalhar com os dados de GLP.
@@ -254,7 +254,7 @@ create table combustiveis_automotivos (
     endereco_bairro STRING COMMENT 'Nome do bairro',
     endereco_cep STRING COMMENT 'Código Postal',
     produto STRING COMMENT 'Nome do produto (ex: ETANOL, DIESEL, GASOLINA, etc.)',
-    data STRING COMMENT 'Data da coleta (dd/mm/yyyy)',
+    data STRING COMMENT 'Data da coleta (dd/mm/aaaa)',
     valor_venda STRING COMMENT 'Valor da venda (formato brasileiro)',
     valor_compra STRING COMMENT 'Valor da compra (formato brasileiro)',
     unidade_medida STRING COMMENT 'Unidade de medida (ex: R$ / litro)',
@@ -265,7 +265,6 @@ with serdeproperties (
   "separatorChar" = ";",
   "quoteChar"     = "\""
 )
-fields terminated by ';'
 stored as textfile
 tblproperties("skip.header.line.count"="1");
 ```
@@ -291,7 +290,7 @@ describe table extended combustiveis_automotivos
 | endereco_bairro       | string     | Nome do bairro                                     |
 | endereco_cep          | string     | Código Postal                                      |
 | produto               | string     | Nome do produto (ex: ETANOL, DIESEL, GASOLINA, ... |
-| data                  | string     | Data da coleta (dd/mm/yyyy)                        |
+| data                  | string     | Data da coleta (dd/mm/aaaa)                        |
 | valor_venda           | string     | Valor da venda (formato brasileiro)                |
 | valor_compra          | string     | Valor da compra (formato brasileiro)               |
 | unidade_medida        | string     | Unidade de medida (ex: R$ / litro)                 |
@@ -418,7 +417,7 @@ Há um limite para o número de partições. Apesar de ser configurável, seria 
 
 Consideramos então particionar a tabela somente pelo campo `produto`.
 
-Usamos a compartimentação (bucketing) por `data` para otimizar a combinação dos dados (JOIN) com outras séries históricas.
+Usamos a compartimentação (bucketing) por `mes` (data no formato aaaa-mm) para otimizar a combinação dos dados (JOIN) com outras séries históricas.
 
 > Bucketing works well when the field has high cardinality and data is evenly distributed among buckets. 
 
@@ -440,6 +439,7 @@ create table combustiveis_automotivos_otimizada (
   endereco_complemento STRING,
   endereco_bairro STRING,
   endereco_cep STRING,
+  mes STRING,
   data DATE,
   valor_venda DECIMAL(10,4),  -- Tipo decimal com até 4 casas decimais
   valor_compra DECIMAL(10,4),  -- Tipo decimal com até 4 casas decimais
@@ -447,7 +447,7 @@ create table combustiveis_automotivos_otimizada (
   bandeira STRING
 )
 partitioned by (produto STRING)
-clustered by (data) into 8 buckets
+clustered by (mes) into 8 buckets
 stored as orc
 tblproperties ("orc.compress"="SNAPPY");
 ```
@@ -479,12 +479,12 @@ describe combustiveis_automotivos_otimizada;
 | endereco_complemento     | string         |          |
 | endereco_bairro          | string         |          |
 | endereco_cep             | string         |          |
+| mes                      | string         |          |
 | data                     | date           |          |
 | valor_venda              | decimal(10,4)  |          |
 | valor_compra             | decimal(10,4)  |          |
 | unidade_medida           | string         |          |
 | bandeira                 | string         |          |
-| estado                   | string         |          |
 | produto                  | string         |          |
 |                          | NULL           | NULL     |
 | # Partition Information  | NULL           | NULL     |
@@ -497,7 +497,6 @@ Uma vez criada a tabela otimizada, podemos inserir os registros a partir da tabe
 
 ```
 use precos_anp;
-
 insert overwrite table combustiveis_automotivos_otimizada 
 select
   regiao,
@@ -510,6 +509,7 @@ select
   endereco_complemento,
   endereco_bairro,
   endereco_cep,
+  regexp_replace(data, '^(\\d{2})/(\\d{2})/(\\d{4})$', '$3-$2') as mes,
   cast(regexp_replace(data, '^(\\d{2})/(\\d{2})/(\\d{4})$', '$3-$2-$1') as date) as data,
   cast(replace(valor_venda, ',', '.') as decimal(10,4)) as valor_venda,
   cast(replace(valor_compra, ',', '.') as decimal(10,4)) as valor_compra,
@@ -527,6 +527,7 @@ Em caso de `Out of Memory`, fazer a inserção por partes usando o `insert into`
 Refazendo a contagem de registros por produto
 
 ```
+use precos_anp;
 select produto, count(*) from combustiveis_automotivos_otimizada group by produto;
 ```
 
@@ -576,4 +577,464 @@ Found 8 items
 -rw-r--r--   2 anonymous hadoop    9195491 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000005_0
 -rw-r--r--   2 anonymous hadoop   10241446 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000006_0
 -rw-r--r--   2 anonymous hadoop    9465032 2023-09-04 04:48 /user/hive/warehouse/precos_anp.db/combustiveis_automotivos_otimizada/produto=DIESEL/000007_0
+```
+
+## 9. Dados complementares
+
+Como segunda tabela de dados, coletamos a série histórica mensal dos preços de distribuição de combustíveis líquidos, com dados desde 2020/09.
+
+- [Preços de distribuição de combustíveis](https://www.gov.br/anp/pt-br/assuntos/precos-e-defesa-da-concorrencia/precos/precos-de-distribuicao-de-combustiveis)
+
+O arquivo está em formato do Excel. Foi necessário limpar e converter para o formato CSV. Usamos o nome `combustiveis-liquidos-municipios.csv`.
+
+Temos as seguintes colunas no CSV:
+
+- MÊS
+- PRODUTO
+- REGIÃO
+- ESTADO
+- MUNICÍPIO
+- UNIDADE DE MEDIDA
+- PREÇO MÉDIO DE DISTRIBUIÇÃO
+- DESVIO PADRÃO
+
+Subimos o arquivo para o bucket `hadoop-dados-brutos` na pasta `anp-combustiveis-automotivos`.
+
+Usando o beeline, criamos uma tabela `distribuicao_combustiveis` para os dados em CSV:
+
+```sql
+use precos_anp;
+
+create table distribuicao_combustiveis (
+    mes STRING COMMENT 'Mês de coleta do preço (aaaa-mm)',
+    produto STRING COMMENT 'Nome do produto (ex: ETANOL HIDRATADO COMUM, GASOLINA C COMUM, etc.)',
+    regiao STRING COMMENT 'Região do país (ex: NORTE, CENTRO OESTE, etc.)',
+    estado STRING COMMENT 'Estado do país (ex: CENTRO OESTE)',
+    municipio STRING COMMENT 'Nome do município (ex: CRUZEIRO DO SUL)',
+    unidade_medida STRING COMMENT 'Unidade de medida (ex: R%/l)',
+    preco_medio STRING COMMENT 'Preço médio com 3 casas decimais (formato brasileiro)',
+    desvio_padrao STRING COMMENT 'Desvio padrão da amostra com 3 casas decimais (formato brasileiro)'
+)
+row format serde 'org.apache.hadoop.hive.serde2.OpenCSVSerde'
+with serdeproperties (
+  "separatorChar" = ";",
+  "quoteChar"     = "\""
+)
+stored as textfile
+tblproperties("skip.header.line.count"="1");
+```
+
+Usamos o `load data` dessa vez com a diretiva `local` pois o arquivo CSV não está no HDFS.
+
+```
+load data local inpath '/home/<username>/combustiveis-liquidos-municipios.csv' overwrite into table distribuicao_combustiveis
+```
+
+Nota: Não foi possível transferir diretamente do `bucket` montado. O `beeline` não localizava o arquivo.
+
+Criamos uma tabela otimizada, porém sem preocupação com compressão, particionamento ou `bucket` por ser uma tabela pequena (80000 registros).
+
+```sql
+create table distribuicao_combustiveis_otimizada (
+  mes STRING,
+  produto STRING,
+  regiao STRING,
+  estado STRING,
+  municipio STRING,
+  unidade_medida STRING,
+  preco_medio DECIMAL(10,3),
+  desvio_padrao DECIMAL(10,3)
+)
+stored as orc
+tblproperties ("orc.compress"="NONE");
+```
+
+```
+show tables
+
++--------------------------------------+
+|               tab_name               |
++--------------------------------------+
+| combustiveis_automotivos             |
+| combustiveis_automotivos_otimizada   |
+| distribuicao_combustiveis            |
+| distribuicao_combustiveis_otimizada  |
++--------------------------------------+
+```
+
+Executando a carga da tabela otimizada com algumas conversões de valores para compatibilizar com a tabela `combustiveis_automotivos_otimizada`
+
+```sql
+insert overwrite table distribuicao_combustiveis_otimizada 
+select
+  mes,
+  case
+    when produto = 'ETANOL HIDRATADO COMUM' then 'ETANOL'
+    when produto = 'GASOLINA C COMUM' then 'GASOLINA'
+    when produto = 'GASOLINA C COMUM ADITIVADA' then 'GASOLINA ADITIVADA'
+    when produto = 'ÓLEO DIESEL B S10 - COMUM' then 'DIESEL S10'
+    when produto = 'ÓLEO DIESEL B S500 - COMUM' then 'DIESEL S500'
+    else NULL
+  end as produto,
+  case
+    when regiao = 'CENTRO OESTE' then 'CO'
+    when regiao = 'NORDESTE' then 'NE'
+    when regiao = 'NORTE' then 'N'
+    when regiao = 'SUDESTE' then 'SE'
+    when regiao = 'SUL' then 'S'
+    else NULL
+  end as regiao,
+  case
+    when estado = 'ACRE' then 'AC'
+    when estado = 'ALAGOAS' then 'AL'
+    when estado = 'AMAZONAS' then 'AM'
+    when estado = 'AMAPA' then 'AP'
+    when estado = 'BAHIA' then 'BA'
+    when estado = 'CEARA' then 'CE'
+    when estado = 'DISTRITO FEDERAL' then 'DF'
+    when estado = 'ESPIRITO SANTO' then 'ES'
+    when estado = 'GOIAS' then 'GO'
+    when estado = 'MARANHAO' then 'MA'
+    when estado = 'MINAS GERAIS' then 'MG'
+    when estado = 'MATO GROSSO DO SUL' then 'MS'
+    when estado = 'MATO GROSSO' then 'MT'
+    when estado = 'PARA' then 'PA'
+    when estado = 'PARAIBA' then 'PB'
+    when estado = 'PERNAMBUCO' then 'PE'
+    when estado = 'PIAUI' then 'PI'
+    when estado = 'PARANA' then 'PR'
+    when estado = 'RIO DE JANEIRO' then 'RJ'
+    when estado = 'RIO GRANDE DO NORTE' then 'RN'
+    when estado = 'RONDONIA' then 'RO'
+    when estado = 'RORAIMA' then 'RR'
+    when estado = 'RIO GRANDE DO SUL' then 'RS'
+    when estado = 'SANTA CATARINA' then 'SC'
+    when estado = 'SERGIPE' then 'SE'
+    when estado = 'SAO PAULO' then 'SP'
+    when estado = 'TOCANTINS' then 'TO'
+    else NULL
+  end as estado,
+  municipio,
+  unidade_medida,
+  cast(replace(preco_medio, ',', '.') as decimal(10,3)),
+  cast(replace(desvio_padrao, ',', '.') as decimal(10,3))
+from distribuicao_combustiveis
+where trim(preco_medio) not in ('', '-');
+```
+
+Verificando os dados
+
+```sql
+select produto, count(*)
+from distribuicao_combustiveis_otimizada
+group by produto;
+```
+
+```
++---------------------+--------+
+|       produto       |  _c1   |
++---------------------+--------+
+| DIESEL S10          | 16062  |
+| DIESEL S500         | 15246  |
+| ETANOL              | 15892  |
+| GASOLINA            | 16065  |
+| GASOLINA ADITIVADA  | 16056  |
++---------------------+--------+
+5 rows selected (21.159 seconds)
+```
+
+## 10. Consultas
+
+1. Qual a distribuição de CNPJs por bandeira?
+
+```sql
+select
+  bandeira, count(distinct cnpj_revenda) c
+from combustiveis_automotivos
+group by bandeira
+order by c desc;
+```
+
+```
++-------------------------------+--------+
+|           bandeira            |   c    |
++-------------------------------+--------+
+| BRANCA                        | 26021  |
+| PETROBRAS DISTRIBUIDORA S.A.  | 9208   |
+| IPIRANGA                      | 7126   |
+| RAIZEN                        | 5819   |
+| CBPI                          | 4033   |
+| VIBRA ENERGIA                 | 3549   |
+| COSAN LUBRIFICANTES           | 2395   |
+| ALESAT                        | 1774   |
+| LIQUIGÁS                      | 498    |
+| SABBÁ                         | 484    |
+| SATELITE                      | 463    |
+...
+```
+
+A consulta retornou 268 bandeiras diferentes. Pelo alto numero de bandeiras, consideramos que não é interessante fazer outras comparações de dados entre as bandeiras.
+
+Decidimos focar nas comparações entre os estados.
+
+2. Qual o preço médio de revenda de combustíveis por mês, produto, estado?
+
+Consideramos declarar como uma `view materializada` para facilitar o reuso em consultas subsequentes.
+
+```sql
+create materialized view vw_media_venda_combustiveis_automotivos
+disable rewrite
+as
+select
+  mes, regiao, estado, produto,
+  avg(valor_venda) valor_venda_medio
+ from combustiveis_automotivos_otimizada
+ group by mes, regiao, estado, produto
+ order by mes desc, regiao, estado, produto;
+```
+
+```
+show tables
+
++------------------------------------------+
+|                 tab_name                 |
++------------------------------------------+
+| combustiveis_automotivos                 |
+| combustiveis_automotivos_otimizada       |
+| distribuicao_combustiveis                |
+| distribuicao_combustiveis_otimizada      |
+| vw_media_venda_combustiveis_automotivos  |
++------------------------------------------+
+```
+
+Fazendo uma comparação do preço médio da gasolina entre os estados, considerando o último mês da série (2023-06)
+
+```sql
+select
+ regiao, estado, valor_venda_medio
+from vw_media_venda_combustiveis_automotivos
+where mes='2023-06' and produto = 'GASOLINA'
+order by valor_venda_medio desc;
+```
+
+```
++---------+---------+---------------------------+
+| regiao  | estado  |     valor_venda_medio     |
++---------+---------+---------------------------+
+| N       | AM      | 6.1963485477178423236515  |
+| N       | AC      | 6.0998591549295774647887  |
+| N       | RO      | 5.9115189873417721518987  |
+| N       | RR      | 5.7430882352941176470588  |
+| NE      | RN      | 5.7096984924623115577889  |
+| N       | TO      | 5.6135135135135135135135  |
+| SE      | ES      | 5.5868246445497630331754  |
+| NE      | BA      | 5.5735056876938986556360  |
+| NE      | AL      | 5.5541255605381165919283  |
+| S       | SC      | 5.5486000000000000000000  |
+| N       | PA      | 5.4800686498855835240275  |
+| S       | PR      | 5.4466319772942289498581  |
+| NE      | CE      | 5.4353145695364238410596  |
+| S       | RS      | 5.4297478991596638655462  |
+| CO      | DF      | 5.4250000000000000000000  |
+| NE      | PE      | 5.4204094488188976377953  |
+| CO      | MS      | 5.4188059701492537313433  |
+| SE      | RJ      | 5.4183605393896380411639  |
+| NE      | SE      | 5.4177124183006535947712  |
+| CO      | MT      | 5.3905769230769230769231  |
+| CO      | GO      | 5.3576572958500669344043  |
+| NE      | PI      | 5.2799528301886792452830  |
+| NE      | MA      | 5.2708883248730964467005  |
+| SE      | SP      | 5.2611028287461773700306  |
+| SE      | MG      | 5.2551664254703328509407  |
+| NE      | PB      | 5.2194736842105263157895  |
+| N       | AP      | 5.0321590909090909090909  |
++---------+---------+---------------------------+
+```
+
+Os dados indicam que os valores mais altos se concentram no norte do país (vamos analisar mais abaixo o caso do Amapá).
+
+A consulta pode ser reutilizada para comparações de valores de outros produtos e meses.
+
+3. Qual o preço médio de distribuição de combustíveis por mês, produto, estado?
+
+Consideramos declarar como uma `view materializada` para facilitar o reuso em consultas subsequentes.
+
+```sql
+create materialized view vw_media_distribuicao_combustiveis_automotivos
+disable rewrite
+as
+select
+  mes, regiao, estado, produto,
+  avg(preco_medio) valor_distribuicao_medio
+ from distribuicao_combustiveis_otimizada
+ group by mes, regiao, estado, produto
+ order by mes desc, regiao, estado, produto;
+```
+
+Fazendo uma comparação do preço médio de distribuição da gasolina entre os estados, considerando o último mês da série (2023-06)
+
+```sql
+select
+ regiao, estado, valor_distribuicao_medio
+from vw_media_distribuicao_combustiveis_automotivos
+where mes='2023-06' and produto = 'GASOLINA'
+order by valor_distribuicao_medio desc;
+```
+
+```
++---------+---------+---------------------------+
+| regiao  | estado  | valor_distribuicao_medio  |
++---------+---------+---------------------------+
+| N       | AC      | 5.031000000000000000000   |
+| N       | RR      | 4.908000000000000000000   |
+| SE      | ES      | 4.877400000000000000000   |
+| NE      | AL      | 4.877200000000000000000   |
+| NE      | CE      | 4.867307692307692307692   |
+| N       | AM      | 4.866400000000000000000   |
+| NE      | RN      | 4.858500000000000000000   |
+| CO      | MS      | 4.857142857142857142857   |
+| NE      | SE      | 4.838500000000000000000   |
+| CO      | MT      | 4.824428571428571428571   |
+| N       | RO      | 4.823000000000000000000   |
+| N       | AP      | 4.808500000000000000000   |
+| N       | PA      | 4.802250000000000000000   |
+| CO      | DF      | 4.794000000000000000000   |
+| N       | TO      | 4.771600000000000000000   |
+| NE      | BA      | 4.770433333333333333333   |
+| NE      | PI      | 4.767500000000000000000   |
+| NE      | PB      | 4.727500000000000000000   |
+| SE      | RJ      | 4.721718750000000000000   |
+| S       | SC      | 4.721714285714285714286   |
+| NE      | PE      | 4.716111111111111111111   |
+| S       | RS      | 4.703166666666666666667   |
+| NE      | MA      | 4.666166666666666666667   |
+| SE      | MG      | 4.653810344827586206897   |
+| CO      | GO      | 4.652117647058823529412   |
+| S       | PR      | 4.647172413793103448276   |
+| SE      | SP      | 4.558657407407407407407   |
++---------+---------+---------------------------+
+```
+
+4. Qual o ágio médio entre os preços de revenda e distribuição de combustíveis por mês, produto, estado?
+
+Combinamos as duas tabelas para calcular a razão preço de revenda / preço de distribuição.
+
+Exemplo de execução para o preço da gasolina no último mês da série
+
+```
+select
+  v.mes,
+  v.regiao,
+  v.estado,
+  v.produto,
+  (v.valor_venda_medio / d.valor_distribuicao_medio) as agio_preco_medio
+from
+  vw_media_venda_combustiveis_automotivos v join
+  vw_media_distribuicao_combustiveis_automotivos d on (
+    v.mes = d.mes and
+    v.regiao = d.regiao and
+    v.estado = d.estado and
+    v.produto = d.produto
+  )
+  where v.mes='2023-06' and v.produto = 'GASOLINA'
+  order by agio_preco_medio desc
+```
+
+```
++----------+-----------+-----------+------------+-------------------+
+|  v.mes   | v.regiao  | v.estado  | v.produto  | agio_preco_medio  |
++----------+-----------+-----------+------------+-------------------+
+| 2023-06  | N         | AM        | GASOLINA   | 1.273292          |
+| 2023-06  | N         | RO        | GASOLINA   | 1.225693          |
+| 2023-06  | N         | AC        | GASOLINA   | 1.212455          |
+| 2023-06  | N         | TO        | GASOLINA   | 1.176443          |
+| 2023-06  | NE        | RN        | GASOLINA   | 1.175198          |
+| 2023-06  | S         | SC        | GASOLINA   | 1.175124          |
+| 2023-06  | S         | PR        | GASOLINA   | 1.172031          |
+| 2023-06  | N         | RR        | GASOLINA   | 1.170148          |
+| 2023-06  | NE        | BA        | GASOLINA   | 1.168344          |
+| 2023-06  | S         | RS        | GASOLINA   | 1.154488          |
+| 2023-06  | SE        | SP        | GASOLINA   | 1.154090          |
+| 2023-06  | CO        | GO        | GASOLINA   | 1.151660          |
+| 2023-06  | NE        | PE        | GASOLINA   | 1.149339          |
+| 2023-06  | SE        | RJ        | GASOLINA   | 1.147540          |
+| 2023-06  | SE        | ES        | GASOLINA   | 1.145451          |
+| 2023-06  | N         | PA        | GASOLINA   | 1.141146          |
+| 2023-06  | NE        | AL        | GASOLINA   | 1.138794          |
+| 2023-06  | CO        | DF        | GASOLINA   | 1.131623          |
+| 2023-06  | NE        | MA        | GASOLINA   | 1.129597          |
+| 2023-06  | SE        | MG        | GASOLINA   | 1.129218          |
+| 2023-06  | NE        | SE        | GASOLINA   | 1.119709          |
+| 2023-06  | CO        | MT        | GASOLINA   | 1.117350          |
+| 2023-06  | NE        | CE        | GASOLINA   | 1.116698          |
+| 2023-06  | CO        | MS        | GASOLINA   | 1.115637          |
+| 2023-06  | NE        | PI        | GASOLINA   | 1.107489          |
+| 2023-06  | NE        | PB        | GASOLINA   | 1.104066          |
+| 2023-06  | N         | AP        | GASOLINA   | 1.046513          |
++----------+-----------+-----------+------------+-------------------+
+```
+
+Acompanhando análise anterior, os dados indicam que os maiores ágios se concentram no norte do país.
+
+O caso do Amapá é uma exceção. Encontramos notícia relacionada de 2022-04 e é possível confirmar os dados também nesta janela, parametrizando as consultas documentadas acima.
+
+- [Por que Macapá é a capital com a gasolina mais barata do Brasil](https://www.uol.com.br/carros/noticias/redacao/2022/05/18/por-que-macapa-e-a-capital-com-a-gasolina-mais-barata-do-brasil.htm)
+
+```
++----------+-----------+-----------+------------+-------------------+
+|  v.mes   | v.regiao  | v.estado  | v.produto  | agio_preco_medio  |
++----------+-----------+-----------+------------+-------------------+
+...
+| 2022-04  | SE        | RJ        | GASOLINA   | 1.091584          |
+| 2022-04  | S         | RS        | GASOLINA   | 1.089768          |
+| 2022-04  | NE        | SE        | GASOLINA   | 1.084377          |
+| 2022-04  | NE        | PB        | GASOLINA   | 1.079490          |
+| 2022-04  | CO        | MS        | GASOLINA   | 1.072820          |
+| 2022-04  | N         | AP        | GASOLINA   | 1.033654          |
++----------+-----------+-----------+------------+-------------------+
+```
+
+```
++---------+---------+---------------------------+
+| regiao  | estado  |     valor_venda_medio     |
++---------+---------+---------------------------+
+...
+| NE      | PB      | 7.0913492063492063492063  |
+| N       | RR      | 7.0538461538461538461538  |
+| CO      | MT      | 7.0150873786407766990291  |
+| S       | RS      | 6.9307730496453900709220  |
+| SE      | SP      | 6.9178419402738821976572  |
+| N       | AP      | 6.3693750000000000000000  |
++---------+---------+---------------------------+
+```
+
+5. Em quais estados é mais vantajoso abastecer o carro com alcool?
+
+Diz-se que se o preço do alcool está menor do que 70% do preço da gasolina, é mais vantajoso abastecer com alcool.
+
+Podemos então consultar a razão entre os preços médios de revenda do alcool (etanol) e da gasolina.
+
+```
+select
+  g.mes,
+  g.regiao,
+  g.estado,
+  ( e.valor_venda_medio / g.valor_venda_medio ) as razao_etanol_gasolina
+from
+(
+    select * from
+        vw_media_venda_combustiveis_automotivos
+    where produto = 'GASOLINA'
+) g inner join
+(
+    select * from
+        vw_media_venda_combustiveis_automotivos
+    where produto = 'ETANOL'
+) e on (
+    g.mes = e.mes AND
+    g.regiao = e.regiao AND
+    g.estado = e.estado
+)
+where g.mes = '2023-06'
+order by razao_etanol_gasolina desc;
 ```
