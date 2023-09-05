@@ -14,23 +14,23 @@ Coletamos a série histórica de "Combustíveis automotivos" que vai de 2004 a 2
 
 Temos as seguintes colunas nos arquivos CSV, em conformidade com a documentação de metadados:
 
-- Regiao - Sigla (ex: S, N, SE)
-- Estado - Sigla (ex: RJ, SP, MG)
-- Municipio (nome do município)
-- Revenda (razão social)
-- CNPJ da Revenda (ex: 00.003.188/0001-21)
-- Nome da Rua (informação de logradouro)
-- Numero Rua (informação de logradouro)
-- Complemento (informação de logradouro)
-- Bairro (informação de logradouro)
-- Cep (informação de logradouro)
-- Produto (produto combustível) (ex: GASOLINA, ETANOL, DIESEL)
-- Data da Coleta (data no formato (dd/mm/aaaa)
-- Valor de Venda (numero em formato brasileiro com até 4 casas decimais)
-- Valor de Compra (numero em formato brasileiro com até 4 casas decimais)
-- Unidade de Medida (unidade ao qual o custo se refere) (ex: R$ / litro)
-- Bandeira (nome de marca do posto de revenda) (ex: IPIRANGA, BRANCA, COSAN, etc.)
-```
+| Coluna            | Tipo    | Comentário                                                                           |
+| ----------------- | ------- | ------------------------------------------------------------------------------------ |
+| Regiao            | Texto   | Sigla da região do país (ex: S, N, SE)                                               |
+| Estado            | Texto   | Sigla de unidade federativa (ex: RJ, SP, MG)                                         |
+| Municipio         | Texto   | Nome de município                                                                    |
+| Revenda           | Texto   | Razão social do revendedor de combustível                                            |
+| CNPJ da Revenda   | Texto   | CNPJ do revendedor                                                                   |
+| Nome da Rua       | Texto   | Logradouro                                                                           |
+| Complemento       | Texto   | Logradouro                                                                           |
+| Bairro            | Texto   | Logradouro                                                                           |
+| CEP               | Texto   | Código de Endereçamento Postal                                                       |
+| Produto           | Texto   | Produto combustível (ex: GASOLINA, ETANOL, DIESEL)                                   |
+| Data da Coleta    | Data    | Data da pesquisa de preço (formato dd/mm/aaaa)                                       |
+| Valor de Venda    | Decimal | Valor de venda da unidade de combustível (4 casas decimais, vírgula como separador)  |
+| Valor de Compra   | Decimal | Valor de compra da unidade de combustível (4 casas decimais, virgula como separador) |
+| Unidade de Medida | Texto   | Unidade ao qual os valores de compra e venda se referem (ex: R$ / litro)             |
+| Bandeira          | Texto   | Nome de marca do posto de revenda (ex: IPIRANGA, BRANCA, COSAN, etc.)                |
 
 A princípio não vamos trabalhar com os dados de GLP.
 
@@ -241,7 +241,7 @@ Por enquanto consideramos todos os campos como STRING.
 
 O uso do formato SERDE é necessário pois encontramos alguns registros onde o valor de uma coluna pode ocupar várias linhas, usando neste caso o caractére `"` como marcador de início e fim.
 
-```
+```sql
 use precos_anp;
 
 create table combustiveis_automotivos (
@@ -302,7 +302,7 @@ describe table extended combustiveis_automotivos
 
 ## 7. Carregando os dados
 
-Usamos o comando 'load data' para transferir os dados em CSV para o nosso schema criado.
+Usamos o comando `load data` para transferir os dados em CSV para o nosso schema criado.
 
 ```sql
 load data inpath '/data/anp-combustiveis-automotivos' overwrite into table combustiveis_automotivos
@@ -317,8 +317,8 @@ No rows affected (1.055 seconds)
 
 Verificando se temos dados na tabela `combustiveis_automotivos`
 
-```
-select count(*) from combustiveis_automotivos
+```sql
+select count(*) from combustiveis_automotivos;
 ```
 
 ```
@@ -427,7 +427,7 @@ Usamos a compartimentação (bucketing) por `mes` (data no formato aaaa-mm) para
 
 Com isso chegamos nesse schema para a tabela `combustiveis_automotivos_otimizada` 
 
-```
+```sql
 use precos_anp;
 
 create table combustiveis_automotivos_otimizada (
@@ -497,7 +497,7 @@ describe combustiveis_automotivos_otimizada;
 
 Uma vez criada a tabela otimizada, podemos inserir os registros a partir da tabela de dados brutos, fazendo também a conversão e correção de campos.
 
-```
+```sql
 use precos_anp;
 insert overwrite table combustiveis_automotivos_otimizada 
 select
@@ -528,7 +528,7 @@ Em caso de `Out of Memory`, fazer a inserção por partes usando o `insert into`
 
 Refazendo a contagem de registros por produto
 
-```
+```sql
 use precos_anp;
 select produto, count(*) from combustiveis_automotivos_otimizada group by produto;
 ```
@@ -591,14 +591,16 @@ O arquivo está em formato do Excel. Foi necessário limpar e converter para o f
 
 Temos as seguintes colunas no CSV:
 
-- MÊS
-- PRODUTO
-- REGIÃO
-- ESTADO
-- MUNICÍPIO
-- UNIDADE DE MEDIDA
-- PREÇO MÉDIO DE DISTRIBUIÇÃO
-- DESVIO PADRÃO
+| Coluna                      | Tipo    | Comentário                                                                         |
+| --------------------------- | ------- | ---------------------------------------------------------------------------------- |
+| MÊS                         | String  | Mês de coleta do preço (formato aaaa-mm)                                           |
+| PRODUTO                     | String  | Nome do produto combustível (ex: ETANOL HIDRATADO COMUM, GASOLINA C COMUM, etc.)   |
+| REGIÃO                      | String  | Nome da região do país (ex: NORTE, CENTRO OESTE, etc.)                             |
+| ESTADO                      | String  | Nome da unidade federativa do país (ex: CENTRO OESTE)                              |
+| MUNICÍPIO                   | String  | Nome do Município                                                                  |
+| UNIDADE DE MEDIDA           | String  | Unidade de medida ao qual o preço se refere (ex: R%/l)                             |
+| PREÇO MÉDIO DE DISTRIBUIÇÃO | Decimal | Média de preços das distribuidoras (4 casas decimais, virgula como separador)      |
+| DESVIO PADRÃO               | Decimal | Desvio padrão da distribuição de preços (4 casas decimais, virgula como separador) | 
 
 Subimos o arquivo para o bucket `hadoop-dados-brutos` na pasta `anp-combustiveis-automotivos`.
 
@@ -629,7 +631,7 @@ tblproperties("skip.header.line.count"="1");
 Usamos o `load data` dessa vez com a diretiva `local` pois o arquivo CSV não está no HDFS.
 
 ```
-load data local inpath '/home/<username>/combustiveis-liquidos-municipios.csv' overwrite into table distribuicao_combustiveis
+load data local inpath '/home/<username>/combustiveis-liquidos-municipios.csv' overwrite into table distribuicao_combustiveis;
 ```
 
 Nota: Não foi possível transferir diretamente do `bucket` montado. O `beeline` não localizava o arquivo.
@@ -749,12 +751,12 @@ group by produto;
 
 Algumas perguntas para análise dos dados com consultas SQL de exemplo e pesquisas relacionadas na web.
 
-1. Qual a distribuição de CNPJs por bandeira?
+### 1. Qual a distribuição de CNPJs por bandeira?
 
 ```sql
 select
   bandeira, count(distinct cnpj_revenda) c
-from combustiveis_automotivos
+from combustiveis_automotivos_otimizada
 group by bandeira
 order by c desc;
 ```
@@ -781,7 +783,7 @@ A consulta retornou 268 bandeiras diferentes. Pelo alto numero de bandeiras, con
 
 Decidimos focar nas comparações entre os estados.
 
-2. Qual o preço médio de revenda de combustíveis por mês, produto, estado?
+### 2. Qual o preço médio de revenda de combustíveis por mês, produto, estado?
 
 Consideramos declarar como uma `view materializada` para facilitar o reuso em consultas subsequentes.
 
@@ -859,7 +861,7 @@ Os dados indicam que os valores mais altos se concentram no norte do país (vamo
 
 A consulta pode ser reutilizada para comparações de valores de outros produtos e meses.
 
-3. Qual o preço médio de distribuição de combustíveis por mês, produto, estado?
+### 3. Qual o preço médio de distribuição de combustíveis por mês, produto, estado?
 
 Consideramos declarar como uma `view materializada` para facilitar o reuso em consultas subsequentes.
 
@@ -919,13 +921,13 @@ order by valor_distribuicao_medio desc;
 +---------+---------+---------------------------+
 ```
 
-4. Qual o ágio médio entre os preços de revenda e distribuição de combustíveis por mês, produto, estado?
+### 4. Qual o ágio médio entre os preços de revenda e distribuição de combustíveis por mês, produto, estado?
 
 Combinamos as duas tabelas para calcular a razão preço de revenda / preço de distribuição.
 
 Exemplo de execução para o preço da gasolina no último mês da série
 
-```
+```sql
 select
   v.mes,
   v.regiao,
@@ -1012,13 +1014,13 @@ O caso do Amapá é uma exceção. Encontramos notícia relacionada de 2022-04 e
 +---------+---------+---------------------------+
 ```
 
-5. Em quais estados é mais vantajoso abastecer o carro com etanol?
+### 5. Em quais estados é mais vantajoso abastecer o carro com etanol?
 
 Diz-se que se o preço do etanol está menor do que 70% do preço da gasolina, é mais vantajoso abastecer com etanol.
 
 Podemos então consultar a razão entre os preços médios de revenda do etanol e da gasolina.
 
-```
+```sql
 select
   g.mes,
   g.regiao,
