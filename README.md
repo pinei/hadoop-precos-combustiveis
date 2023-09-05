@@ -10,6 +10,8 @@ O trabalho faz uso de dados publicados pela ANP (Agência Nacional de Petróleo)
 
 Coletamos a série histórica de "Combustíveis automotivos" que vai de 2004 a 2023. São 39 arquivos CSV totalizando aproximadamente 3.7 GB.
 
+![Amostra dos dados](./assets/amostra_planilha_revenda.png)
+
 - [Metadados em PDF](https://www.gov.br/anp/pt-br/centrais-de-conteudo/dados-abertos/arquivos/shpc/metadados-serie-historica-precos-combustiveis-1.pdf)
 
 Temos as seguintes colunas nos arquivos CSV, em conformidade com a documentação de metadados:
@@ -588,6 +590,8 @@ Como segunda tabela de dados, coletamos a série histórica mensal dos preços d
 - [Preços de distribuição de combustíveis](https://www.gov.br/anp/pt-br/assuntos/precos-e-defesa-da-concorrencia/precos/precos-de-distribuicao-de-combustiveis)
 
 O arquivo está em formato do Excel. Foi necessário limpar e converter para o formato CSV. Usamos o nome `combustiveis-liquidos-municipios.csv`.
+
+![Alt text](./assets/amostra_planilha_distribuicao.png)
 
 Temos as seguintes colunas no CSV:
 
